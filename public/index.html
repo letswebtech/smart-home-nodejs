@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Device Simulator</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .device-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #e8f5e9;
+            border-radius: 4px;
+        }
+
+        .gpio-controls {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .gpio-card {
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+
+        .status {
+            padding: 10px;
+            margin-top: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .connection-status {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .connected {
+            background-color: #c8e6c9;
+        }
+
+        .disconnected {
+            background-color: #ffcdd2;
+        }
+
+        .unstable {
+            background-color: #fff9c4;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked+.slider {
+            background-color: #2196F3;
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(26px);
+        }
+
+        .log-container {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>IoT Device Simulator</h1>
+
+        <div class="device-info">
+            <h3>Device Information</h3>
+            <p>MAC Address: <span id="macAddress">00:1A:2B:3C:4D:5E</span></p>
+            <p>User ID: <input type="text" id="userId" value="gpqRCzRAo9TjYxveNDbE7ml2PkD3"></p>
+            <button onclick="registerDevice()">Register Device</button>
+        </div>
+
+        <div class="connection-status" id="connectionStatus">
+            Not Connected
+        </div>
+
+        <div class="gpio-controls">
+            <div class="gpio-card">
+                <h3>GPIO Pin 1</h3>
+                <label class="switch">
+                    <input type="checkbox" id="pin1" onchange="updatePin(1, this.checked)">
+                    <span class="slider"></span>
+                </label>
+                <div class="status" id="status1">Status: OFF</div>
+            </div>
+            <div class="gpio-card">
+                <h3>GPIO Pin 2</h3>
+                <label class="switch">
+                    <input type="checkbox" id="pin2" onchange="updatePin(2, this.checked)">
+                    <span class="slider"></span>
+                </label>
+                <div class="status" id="status2">Status: OFF</div>
+            </div>
+            <div class="gpio-card">
+                <h3>GPIO Pin 3</h3>
+                <label class="switch">
+                    <input type="checkbox" id="pin3" onchange="updatePin(3, this.checked)">
+                    <span class="slider"></span>
+                </label>
+                <div class="status" id="status3">Status: OFF</div>
+            </div>
+            <div class="gpio-card">
+                <h3>GPIO Pin 4</h3>
+                <label class="switch">
+                    <input type="checkbox" id="pin4" onchange="updatePin(4, this.checked)">
+                    <span class="slider"></span>
+                </label>
+                <div class="status" id="status4">Status: OFF</div>
+            </div>
+        </div>
+
+        <div class="log-container" id="logContainer">
+            <h3>Event Log</h3>
+            <div id="eventLog"></div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let deviceRegistered = false;
+
+        function updateConnectionStatus(status, latency = null) {
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.className = 'connection-status ' + status.toLowerCase();
+            statusDiv.textContent = `Connection: ${status}${latency ? ` (Latency: ${latency}ms)` : ''}`;
+        }
+
+        function logEvent(message) {
+            const logDiv = document.getElementById('eventLog');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function registerDevice() {
+            const macAddress = document.getElementById('macAddress').textContent;
+            const userId = document.getElementById('userId').value;
+
+            const gpioStatus = {};
+            for (let i = 1; i <= 4; i++) {
+                gpioStatus[`pin${i}`] = document.getElementById(`pin${i}`).checked ? 'on' : 'off';
+            }
+
+            socket.emit('device_register', {
+                macAddress,
+                userId,
+                gpioStatus
+            });
+
+            logEvent('Registering device...');
+        }
+
+        function updatePin(pinNumber, isOn) {
+            if (!deviceRegistered) {
+                alert('Please register the device first');
+                document.getElementById(`pin${pinNumber}`).checked = !isOn;
+                return;
+            }
+
+            const macAddress = document.getElementById('macAddress').textContent;
+            const status = isOn ? 'on' : 'off';
+
+            document.getElementById(`status${pinNumber}`).textContent = `Status: ${status.toUpperCase()}`;
+
+            const gpioStatus = {};
+            gpioStatus[`pin${pinNumber}`] = status;
+
+            socket.emit('gpio_status_update', {
+                macAddress,
+                gpioStatus
+            });
+
+            logEvent(`Pin ${pinNumber} turned ${status}`);
+        }
+
+        // Socket event handlers
+        socket.on('connect', () => {
+            updateConnectionStatus('Connected');
+            logEvent('Socket connected');
+        });
+
+        socket.on('disconnect', () => {
+            updateConnectionStatus('Disconnected');
+            deviceRegistered = false;
+            logEvent('Socket disconnected');
+        });
+
+        socket.on('device_registered', (data) => {
+            deviceRegistered = true;
+            logEvent('Device registered successfully');
+        });
+
+        socket.on('error', (data) => {
+            logEvent('Error: ' + data.message);
+        });
+
+        socket.on('gpio_control_command', (data) => {
+            const { pinNumber, state } = data;
+            const pin = document.getElementById(`pin${pinNumber}`);
+            const status = document.getElementById(`status${pinNumber}`);
+
+            pin.checked = state === 'on';
+            status.textContent = `Status: ${state.toUpperCase()}`;
+
+            logEvent(`Received command: Pin ${pinNumber} -> ${state}`);
+        });
+
+        socket.on('heartbeat', () => {
+            socket.emit('heartbeat_ack');
+            logEvent('Heartbeat acknowledged');
+        });
+
+        socket.on('connection_status', (data) => {
+            updateConnectionStatus(data.state, data.latency);
+            logEvent(`Connection status: ${data.state}${data.latency ? ` (${data.latency}ms)` : ''}`);
+        });
+    </script>
+</body>
+
+</html>
