@@ -6,24 +6,50 @@ const cors = require('cors');
 const app = express();
 const server = createServer(app);
 
-// Socket.IO configuration with proper timeouts
+// Socket.IO configuration optimized for ESP32 devices
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   },
-  pingTimeout: 60000,        // 60 seconds before considering connection dead
-  pingInterval: 25000,       // Send ping every 25 seconds
-  transports: ['websocket', 'polling'],
-  allowEIO3: true,
+  pingTimeout: 120000,       // 120 seconds - ESP32 devices may be slow to respond
+  pingInterval: 45000,       // Send ping every 45 seconds (less frequent)
+  transports: ['polling', 'websocket'], // Try polling first for ESP32 compatibility
+  allowEIO3: true,           // Support older Engine.IO clients
   upgradeTimeout: 30000,     // Allow more time for transport upgrade
   maxHttpBufferSize: 1e6,    // 1MB buffer
-  perMessageDeflate: false   // Disable compression for IoT devices
+  perMessageDeflate: false,  // Disable compression for IoT devices
+  connectTimeout: 45000      // Allow more time for initial connection
 });
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date(),
+    connectedDevices: connectedDevices.size,
+    connectedUsers: connectedUsers.size
+  });
+});
+
+// Debug endpoint to see connected devices
+app.get('/api/devices', (req, res) => {
+  const devices = [];
+  for (const [macAddress, device] of connectedDevices.entries()) {
+    devices.push({
+      macAddress,
+      userId: device.userId,
+      socketId: device.socketId,
+      lastSeen: device.lastSeen,
+      gpioStatus: device.gpioStatus
+    });
+  }
+  res.json({ devices });
+});
 
 const connectedDevices = new Map();
 const connectedUsers = new Map();
