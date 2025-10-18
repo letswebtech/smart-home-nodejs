@@ -5,11 +5,17 @@ const cors = require('cors');
 
 const app = express();
 const server = createServer(app);
+
+// FIXED: Added proper Socket.IO configuration
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  pingTimeout: 60000,        // 60 seconds before considering connection dead
+  pingInterval: 25000,       // Send ping every 25 seconds
+  transports: ['websocket', 'polling'],
+  allowEIO3: true            // Support older Engine.IO versions if needed
 });
 
 app.use(cors());
@@ -35,7 +41,6 @@ const monitorConnection = (socket) => {
   let connectionState = CONNECTION_STATES.CONNECTED;
   let lastHeartbeatTime = Date.now();
 
-  // Send heartbeat ping every HEARTBEAT_INTERVAL
   const heartbeatInterval = setInterval(() => {
     const start = Date.now();
     socket.emit('heartbeat');
@@ -53,7 +58,6 @@ const monitorConnection = (socket) => {
     }
   }, HEARTBEAT_INTERVAL);
 
-  // Listen for heartbeat responses
   socket.on('heartbeat_ack', () => {
     missedHeartbeats = 0;
     const latency = Date.now() - lastHeartbeatTime;
@@ -69,7 +73,6 @@ const monitorConnection = (socket) => {
     }
   });
 
-  // Clean up on disconnect
   socket.on('disconnect', () => {
     clearInterval(heartbeatInterval);
   });
@@ -80,19 +83,23 @@ const monitorConnection = (socket) => {
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
-  //DEVICE
-  socket.on('device_register', (data) => {
+  // FIXED: Added support for both 'device_register' AND 'device_online'
+  const handleDeviceRegistration = (data) => {
     const { macAddress, userId, gpioStatus } = data;
 
-    if (!macAddress || !userId) {
-      socket.emit('error', { message: 'MAC address and userId are required' });
+    // FIXED: Make userId optional for initial connection
+    if (!macAddress) {
+      socket.emit('error', { message: 'MAC address is required' });
       return;
     }
+
+    // Use default userId if not provided (for backward compatibility)
+    const deviceUserId = userId || 'default_user';
 
     const deviceInfo = {
       socketId: socket.id,
       macAddress,
-      userId,
+      userId: deviceUserId,
       gpioStatus: gpioStatus || {},
       lastSeen: new Date(),
       type: 'device',
@@ -102,28 +109,31 @@ io.on('connection', (socket) => {
 
     connectedDevices.set(macAddress, deviceInfo);
 
-    if (!deviceUserMap.has(userId)) {
-      deviceUserMap.set(userId, new Set());
+    if (!deviceUserMap.has(deviceUserId)) {
+      deviceUserMap.set(deviceUserId, new Set());
     }
-    deviceUserMap.get(userId).add(macAddress);
+    deviceUserMap.get(deviceUserId).add(macAddress);
 
-    socket.join(`user_${userId}`);
+    socket.join(`user_${deviceUserId}`);
 
     socket.emit('device_registered', {
       message: 'Device registered successfully',
       macAddress
     });
 
-    socket.to(`user_${userId}`).emit('device_online', {
+    socket.to(`user_${deviceUserId}`).emit('device_online', {
       macAddress,
       gpioStatus: gpioStatus || {},
       timestamp: new Date()
     });
 
-    console.log(`IoT Device registered: ${macAddress} for user ${userId}`);
-  });
+    console.log(`IoT Device registered: ${macAddress} for user ${deviceUserId}`);
+  };
 
-  //DEVICE
+  // Support both event names
+  socket.on('device_register', handleDeviceRegistration);
+  socket.on('device_online', handleDeviceRegistration);  // FIXED: Added this
+
   socket.on('gpio_status_update', (data) => {
     const { macAddress, gpioStatus } = data;
 
@@ -145,7 +155,6 @@ io.on('connection', (socket) => {
     console.log(`GPIO status updated for device ${macAddress}:`, gpioStatus);
   });
 
-  //APPLICATION
   socket.on('user_connect', (data) => {
     const { userId } = data;
 
@@ -188,7 +197,6 @@ io.on('connection', (socket) => {
     console.log(`User connected: ${userId}`);
   });
 
-  //APPLIANCE
   socket.on('gpio_control', (data) => {
     const { macAddress, pinNumber, state, userId } = data;
 
@@ -211,18 +219,18 @@ io.on('connection', (socket) => {
     const controlCommand = {
       pinNumber,
       state,
+      macAddress,  // FIXED: Added macAddress to command
       timestamp: new Date()
     };
 
-    //Inform IOT device about the gpio pin status update
+    // FIXED: Send both event names for compatibility
     io.to(device.socketId).emit('gpio_control_command', controlCommand);
+    io.to(device.socketId).emit('gpio_control', controlCommand);
 
-    // Update device GPIO status in server memory for web simulator
     const pinKey = `pin${pinNumber}`;
     device.gpioStatus[pinKey] = state;
     device.lastSeen = new Date();
 
-    // Broadcast the GPIO status change to all users in the same room (including sender)
     io.to(`user_${device.userId}`).emit('gpio_status_changed', {
       macAddress,
       gpioStatus: device.gpioStatus,
@@ -239,7 +247,6 @@ io.on('connection', (socket) => {
     console.log(`GPIO control sent to device ${macAddress}: Pin ${pinNumber} -> ${state}`);
   });
 
-  //APLLICATION - NOT REQUIRED
   socket.on('get_device_status', (data) => {
     const { macAddress, userId } = data;
 
@@ -262,7 +269,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  //APPLICATION
   socket.on('get_user_devices', (data) => {
     const { userId } = data;
 
@@ -287,12 +293,16 @@ io.on('connection', (socket) => {
     });
   });
 
-  //BOTH
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
 
     for (const [macAddress, device] of connectedDevices.entries()) {
       if (device.socketId === socket.id) {
+        // FIXED: Clear heartbeat interval
+        if (device.heartbeatInterval) {
+          clearInterval(device.heartbeatInterval);
+        }
+
         connectedDevices.delete(macAddress);
 
         socket.to(`user_${device.userId}`).emit('device_offline', {
@@ -307,6 +317,11 @@ io.on('connection', (socket) => {
 
     for (const [userId, user] of connectedUsers.entries()) {
       if (user.socketId === socket.id) {
+        // FIXED: Clear heartbeat interval
+        if (user.heartbeatInterval) {
+          clearInterval(user.heartbeatInterval);
+        }
+
         connectedUsers.delete(userId);
         console.log(`User disconnected: ${userId}`);
         break;
@@ -329,17 +344,3 @@ process.on('SIGINT', () => {
     process.exit(0);
   });
 });
-
-
-// {
-//   "pin1": "off",
-//     "pin2": "off",
-//       "pin3": "off",
-//         "pin4": "off"
-// }
-
-// 00:1A:2B:3C:4D:5E
-
-// gpqRCzRAo9TjYxveNDbE7ml2PkD3 
-
-//{"pin1":"off","pin2":"off","pin3":"off","pin4":"off"}
