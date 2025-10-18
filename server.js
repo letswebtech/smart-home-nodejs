@@ -6,7 +6,7 @@ const cors = require('cors');
 const app = express();
 const server = createServer(app);
 
-// FIXED: Added proper Socket.IO configuration
+// Socket.IO configuration with proper timeouts
 const io = new Server(server, {
   cors: {
     origin: "*",
@@ -15,7 +15,7 @@ const io = new Server(server, {
   pingTimeout: 60000,        // 60 seconds before considering connection dead
   pingInterval: 25000,       // Send ping every 25 seconds
   transports: ['websocket', 'polling'],
-  allowEIO3: true            // Support older Engine.IO versions if needed
+  allowEIO3: true
 });
 
 app.use(cors());
@@ -26,74 +26,24 @@ const connectedDevices = new Map();
 const connectedUsers = new Map();
 const deviceUserMap = new Map();
 
-// Connection monitoring constants
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds
-const HEARTBEAT_TIMEOUT = 5000;   // 5 seconds
 const CONNECTION_STATES = {
   CONNECTED: 'connected',
   UNSTABLE: 'unstable',
   DISCONNECTED: 'disconnected'
 };
 
-// Connection monitoring function
-const monitorConnection = (socket) => {
-  let missedHeartbeats = 0;
-  let connectionState = CONNECTION_STATES.CONNECTED;
-  let lastHeartbeatTime = Date.now();
-
-  const heartbeatInterval = setInterval(() => {
-    const start = Date.now();
-    socket.emit('heartbeat');
-
-    missedHeartbeats++;
-    if (missedHeartbeats >= 2) {
-      connectionState = CONNECTION_STATES.UNSTABLE;
-      socket.emit('connection_status', { state: connectionState });
-    }
-
-    if (missedHeartbeats >= 3) {
-      connectionState = CONNECTION_STATES.DISCONNECTED;
-      socket.emit('connection_status', { state: connectionState });
-      socket.disconnect(true);
-    }
-  }, HEARTBEAT_INTERVAL);
-
-  socket.on('heartbeat_ack', () => {
-    missedHeartbeats = 0;
-    const latency = Date.now() - lastHeartbeatTime;
-    lastHeartbeatTime = Date.now();
-
-    const newState = latency > 1000 ? CONNECTION_STATES.UNSTABLE : CONNECTION_STATES.CONNECTED;
-    if (newState !== connectionState) {
-      connectionState = newState;
-      socket.emit('connection_status', {
-        state: connectionState,
-        latency: latency
-      });
-    }
-  });
-
-  socket.on('disconnect', () => {
-    clearInterval(heartbeatInterval);
-  });
-
-  return heartbeatInterval;
-};
-
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
-  // FIXED: Added support for both 'device_register' AND 'device_online'
+  // Device registration handler
   const handleDeviceRegistration = (data) => {
     const { macAddress, userId, gpioStatus } = data;
 
-    // FIXED: Make userId optional for initial connection
     if (!macAddress) {
       socket.emit('error', { message: 'MAC address is required' });
       return;
     }
 
-    // Use default userId if not provided (for backward compatibility)
     const deviceUserId = userId || 'default_user';
 
     const deviceInfo = {
@@ -103,8 +53,7 @@ io.on('connection', (socket) => {
       gpioStatus: gpioStatus || {},
       lastSeen: new Date(),
       type: 'device',
-      connectionState: CONNECTION_STATES.CONNECTED,
-      heartbeatInterval: monitorConnection(socket)
+      connectionState: CONNECTION_STATES.CONNECTED
     };
 
     connectedDevices.set(macAddress, deviceInfo);
@@ -132,7 +81,7 @@ io.on('connection', (socket) => {
 
   // Support both event names
   socket.on('device_register', handleDeviceRegistration);
-  socket.on('device_online', handleDeviceRegistration);  // FIXED: Added this
+  socket.on('device_online', handleDeviceRegistration);
 
   socket.on('gpio_status_update', (data) => {
     const { macAddress, gpioStatus } = data;
@@ -152,7 +101,19 @@ io.on('connection', (socket) => {
       timestamp: new Date()
     });
 
-    console.log(`GPIO status updated for device ${macAddress}:`, gpioStatus);
+    console.log(`GPIO status updated for device ${macAddress}`);
+  });
+
+  // Update lastSeen when device sends heartbeat
+  socket.on('heartbeat_ack', () => {
+    // Find device by socket ID
+    for (const [macAddress, device] of connectedDevices.entries()) {
+      if (device.socketId === socket.id) {
+        device.lastSeen = new Date();
+        device.connectionState = CONNECTION_STATES.CONNECTED;
+        break;
+      }
+    }
   });
 
   socket.on('user_connect', (data) => {
@@ -168,8 +129,7 @@ io.on('connection', (socket) => {
       userId,
       lastSeen: new Date(),
       type: 'user',
-      connectionState: CONNECTION_STATES.CONNECTED,
-      heartbeatInterval: monitorConnection(socket)
+      connectionState: CONNECTION_STATES.CONNECTED
     };
 
     connectedUsers.set(userId, userInfo);
@@ -219,11 +179,11 @@ io.on('connection', (socket) => {
     const controlCommand = {
       pinNumber,
       state,
-      macAddress,  // FIXED: Added macAddress to command
+      macAddress,
       timestamp: new Date()
     };
 
-    // FIXED: Send both event names for compatibility
+    // Send both event names for compatibility
     io.to(device.socketId).emit('gpio_control_command', controlCommand);
     io.to(device.socketId).emit('gpio_control', controlCommand);
 
@@ -298,11 +258,6 @@ io.on('connection', (socket) => {
 
     for (const [macAddress, device] of connectedDevices.entries()) {
       if (device.socketId === socket.id) {
-        // FIXED: Clear heartbeat interval
-        if (device.heartbeatInterval) {
-          clearInterval(device.heartbeatInterval);
-        }
-
         connectedDevices.delete(macAddress);
 
         socket.to(`user_${device.userId}`).emit('device_offline', {
@@ -317,11 +272,6 @@ io.on('connection', (socket) => {
 
     for (const [userId, user] of connectedUsers.entries()) {
       if (user.socketId === socket.id) {
-        // FIXED: Clear heartbeat interval
-        if (user.heartbeatInterval) {
-          clearInterval(user.heartbeatInterval);
-        }
-
         connectedUsers.delete(userId);
         console.log(`User disconnected: ${userId}`);
         break;
