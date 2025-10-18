@@ -15,7 +15,10 @@ const io = new Server(server, {
   pingTimeout: 60000,        // 60 seconds before considering connection dead
   pingInterval: 25000,       // Send ping every 25 seconds
   transports: ['websocket', 'polling'],
-  allowEIO3: true
+  allowEIO3: true,
+  upgradeTimeout: 30000,     // Allow more time for transport upgrade
+  maxHttpBufferSize: 1e6,    // 1MB buffer
+  perMessageDeflate: false   // Disable compression for IoT devices
 });
 
 app.use(cors());
@@ -33,13 +36,16 @@ const CONNECTION_STATES = {
 };
 
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
+  console.log(`Client connected: ${socket.id} [Transport: ${socket.conn.transport.name}]`);
 
   // Device registration handler
   const handleDeviceRegistration = (data) => {
+    console.log('Device registration attempt:', JSON.stringify(data));
+
     const { macAddress, userId, gpioStatus } = data;
 
     if (!macAddress) {
+      console.error('Registration failed: No MAC address provided');
       socket.emit('error', { message: 'MAC address is required' });
       return;
     }
@@ -76,7 +82,7 @@ io.on('connection', (socket) => {
       timestamp: new Date()
     });
 
-    console.log(`IoT Device registered: ${macAddress} for user ${deviceUserId}`);
+    console.log(`✓ IoT Device registered: ${macAddress} for user ${deviceUserId} (Socket: ${socket.id})`);
   };
 
   // Support both event names
@@ -253,8 +259,8 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`Client disconnected: ${socket.id} - Reason: ${reason}`);
 
     for (const [macAddress, device] of connectedDevices.entries()) {
       if (device.socketId === socket.id) {
@@ -265,7 +271,7 @@ io.on('connection', (socket) => {
           timestamp: new Date()
         });
 
-        console.log(`IoT Device disconnected: ${macAddress}`);
+        console.log(`IoT Device disconnected: ${macAddress} - Reason: ${reason}`);
         break;
       }
     }
@@ -273,10 +279,15 @@ io.on('connection', (socket) => {
     for (const [userId, user] of connectedUsers.entries()) {
       if (user.socketId === socket.id) {
         connectedUsers.delete(userId);
-        console.log(`User disconnected: ${userId}`);
+        console.log(`User disconnected: ${userId} - Reason: ${reason}`);
         break;
       }
     }
+  });
+
+  // Add error handler
+  socket.on('error', (error) => {
+    console.error(`Socket error for ${socket.id}:`, error);
   });
 
 });
