@@ -6,16 +6,14 @@ const cors = require('cors');
 const app = express();
 const server = http.createServer(app);
 
-// Socket.IO v2.x configuration for ESP32 compatibility
+// Socket.IO v2.3.0 configuration for ESP32 compatibility (uses EIO v3 by default)
 const io = socketIO(server, {
-  pingTimeout: 60000,        // 60 seconds
-  pingInterval: 25000,       // 25 seconds
+  pingTimeout: 60000,
+  pingInterval: 25000,
   transports: ['polling', 'websocket'],
-  allowEIO3: true,           // Support Engine.IO v3
   perMessageDeflate: false,
   cookie: false,
   serveClient: false,
-  // CORS handled by express middleware
   origins: '*:*'
 });
 
