@@ -69,6 +69,47 @@ const CONNECTION_STATES = {
   DISCONNECTED: 'disconnected'
 };
 
+// Device timeout settings
+const DEVICE_TIMEOUT_MS = 90000; // 90 seconds (3x heartbeat interval)
+const CLEANUP_INTERVAL_MS = 30000; // Check every 30 seconds
+
+// Background job to clean up stale devices
+function cleanupStaleDevices() {
+  const now = new Date();
+  const devicesToRemove = [];
+
+  for (const [macAddress, device] of connectedDevices.entries()) {
+    const timeSinceLastSeen = now - device.lastSeen;
+
+    if (timeSinceLastSeen > DEVICE_TIMEOUT_MS) {
+      devicesToRemove.push({ macAddress, device });
+      console.log(`⏰ Device ${macAddress} timed out (last seen ${Math.floor(timeSinceLastSeen / 1000)}s ago)`);
+    }
+  }
+
+  // Remove timed out devices
+  devicesToRemove.forEach(({ macAddress, device }) => {
+    connectedDevices.delete(macAddress);
+
+    // Notify users that device went offline
+    io.to(`user_${device.userId}`).emit('device_offline', {
+      macAddress,
+      timestamp: now,
+      reason: 'timeout'
+    });
+
+    console.log(`🔴 Device removed (timeout): ${macAddress}`);
+  });
+
+  if (devicesToRemove.length > 0) {
+    console.log(`Cleanup: Removed ${devicesToRemove.length} stale device(s)`);
+  }
+}
+
+// Start cleanup job
+const cleanupInterval = setInterval(cleanupStaleDevices, CLEANUP_INTERVAL_MS);
+console.log(`✓ Device cleanup job started (checking every ${CLEANUP_INTERVAL_MS / 1000}s)`);
+
 io.on('connection', (socket) => {
   const userAgent = socket.handshake.headers['user-agent'] || 'Unknown';
   const isESP32 = userAgent.includes('ESP32') || userAgent.includes('arduino-WebSocket') || !userAgent.includes('Mozilla');
@@ -365,6 +406,10 @@ server.listen(PORT, () => {
 
 process.on('SIGINT', () => {
   console.log('\nShutting down server...');
+
+  // Clear cleanup interval
+  clearInterval(cleanupInterval);
+
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
