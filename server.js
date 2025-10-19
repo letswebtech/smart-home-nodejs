@@ -6,22 +6,22 @@ const cors = require('cors');
 const app = express();
 const server = createServer(app);
 
-// Socket.IO configuration optimized for ESP32 devices
+// Socket.IO configuration optimized for ESP32 devices (based on working Heroku setup)
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"],
     credentials: false
   },
-  pingTimeout: 120000,       // 120 seconds - ESP32 devices may be slow to respond
-  pingInterval: 45000,       // Send ping every 45 seconds (less frequent)
-  transports: ['polling'],   // CHANGED: Force polling only for ESP32 (no websocket upgrade)
+  pingTimeout: 60000,        // 60 seconds (matching Heroku setup)
+  pingInterval: 25000,       // 25 seconds ping interval
+  transports: ['polling', 'websocket'], // Allow both transports
   allowEIO3: true,           // CRITICAL: Support Engine.IO v3 for ESP32
-  upgradeTimeout: 30000,     // Allow more time for transport upgrade
+  upgradeTimeout: 10000,     // 10 seconds for upgrade
   maxHttpBufferSize: 1e6,    // 1MB buffer
   perMessageDeflate: false,  // Disable compression for IoT devices
-  connectTimeout: 45000,     // Allow more time for initial connection
-  allowUpgrades: false,      // CHANGED: Disable upgrades to prevent websocket issues
+  connectTimeout: 45000,     // Allow time for initial connection
+  allowUpgrades: true,       // Allow transport upgrades
   cookie: false              // Disable cookies for IoT devices
 });
 
