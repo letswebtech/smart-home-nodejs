@@ -1,20 +1,24 @@
 const express = require('express');
-const http = require('http');
-const socketIO = require('socket.io');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-const server = http.createServer(app);
+const server = createServer(app);
 
-// Socket.IO v2.3.0 configuration for ESP32 compatibility (uses EIO v3 by default)
-const io = socketIO(server, {
+// Socket.IO v4 configuration optimized for ESP32 HTTPS connections
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+    credentials: false
+  },
   pingTimeout: 60000,
   pingInterval: 25000,
   transports: ['polling', 'websocket'],
+  allowEIO3: true,           // Support Engine.IO v3 for ESP32
   perMessageDeflate: false,
-  cookie: false,
-  serveClient: false,
-  origins: '*:*'
+  cookie: false
 });
 
 app.use(cors());
