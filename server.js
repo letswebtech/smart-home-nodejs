@@ -15,19 +15,28 @@ const io = new Server(server, {
   },
   pingTimeout: 120000,       // 120 seconds - ESP32 devices may be slow to respond
   pingInterval: 45000,       // Send ping every 45 seconds (less frequent)
-  transports: ['polling', 'websocket'], // Try polling first for ESP32 compatibility
+  transports: ['polling'],   // CHANGED: Force polling only for ESP32 (no websocket upgrade)
   allowEIO3: true,           // CRITICAL: Support Engine.IO v3 for ESP32
   upgradeTimeout: 30000,     // Allow more time for transport upgrade
   maxHttpBufferSize: 1e6,    // 1MB buffer
   perMessageDeflate: false,  // Disable compression for IoT devices
   connectTimeout: 45000,     // Allow more time for initial connection
-  allowUpgrades: true,       // Allow transport upgrades
+  allowUpgrades: false,      // CHANGED: Disable upgrades to prevent websocket issues
   cookie: false              // Disable cookies for IoT devices
 });
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Log all Socket.IO requests for debugging
+app.use('/socket.io/*', (req, res, next) => {
+  console.log(`📥 Socket.IO Request: ${req.method} ${req.url}`);
+  console.log(`   - From: ${req.ip}`);
+  console.log(`   - User-Agent: ${req.get('user-agent') || 'None'}`);
+  console.log(`   - Query: ${JSON.stringify(req.query)}`);
+  next();
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -57,6 +66,14 @@ app.get('/api/devices', (req, res) => {
 const connectedDevices = new Map();
 const connectedUsers = new Map();
 const deviceUserMap = new Map();
+
+// Add Engine.IO level debugging
+io.engine.on("connection_error", (err) => {
+  console.error("⚠️ Engine.IO connection error:", err);
+  console.error("   - Code:", err.code);
+  console.error("   - Message:", err.message);
+  console.error("   - Context:", err.context);
+});
 
 const CONNECTION_STATES = {
   CONNECTED: 'connected',
