@@ -62,7 +62,32 @@ const CONNECTION_STATES = {
 };
 
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id} [Transport: ${socket.conn.transport.name}]`);
+  console.log(`✓ Client connected: ${socket.id} [Transport: ${socket.conn.transport.name}]`);
+  console.log(`  - Protocol: ${socket.conn.protocol}`);
+  console.log(`  - Headers: ${JSON.stringify(socket.handshake.headers['user-agent'])}`);
+
+  // Log transport upgrade events
+  socket.conn.on('upgrade', (transport) => {
+    console.log(`Transport upgraded to: ${transport.name} for socket ${socket.id}`);
+  });
+
+  // Track if device registers within reasonable time
+  const registrationTimeout = setTimeout(() => {
+    let isRegistered = false;
+    for (const [mac, device] of connectedDevices.entries()) {
+      if (device.socketId === socket.id) {
+        isRegistered = true;
+        break;
+      }
+    }
+    if (!isRegistered) {
+      console.log(`⚠️ Client ${socket.id} connected but never registered as device or user`);
+    }
+  }, 15000); // 15 second timeout - increased for ESP32
+
+  socket.on('disconnect', () => {
+    clearTimeout(registrationTimeout);
+  });
 
   // Device registration handler
   const handleDeviceRegistration = (data) => {
