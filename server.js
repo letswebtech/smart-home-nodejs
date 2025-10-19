@@ -1,28 +1,22 @@
 const express = require('express');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
+const http = require('http');
+const socketIO = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-const server = createServer(app);
+const server = http.createServer(app);
 
-// Socket.IO configuration optimized for ESP32 devices (based on working Heroku setup)
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"],
-    credentials: false
-  },
-  pingTimeout: 60000,        // 60 seconds (matching Heroku setup)
-  pingInterval: 25000,       // 25 seconds ping interval
-  transports: ['polling', 'websocket'], // Allow both transports
-  allowEIO3: true,           // CRITICAL: Support Engine.IO v3 for ESP32
-  upgradeTimeout: 10000,     // 10 seconds for upgrade
-  maxHttpBufferSize: 1e6,    // 1MB buffer
-  perMessageDeflate: false,  // Disable compression for IoT devices
-  connectTimeout: 45000,     // Allow time for initial connection
-  allowUpgrades: true,       // Allow transport upgrades
-  cookie: false              // Disable cookies for IoT devices
+// Socket.IO v2.x configuration for ESP32 compatibility
+const io = socketIO(server, {
+  pingTimeout: 60000,        // 60 seconds
+  pingInterval: 25000,       // 25 seconds
+  transports: ['polling', 'websocket'],
+  allowEIO3: true,           // Support Engine.IO v3
+  perMessageDeflate: false,
+  cookie: false,
+  serveClient: false,
+  // CORS handled by express middleware
+  origins: '*:*'
 });
 
 app.use(cors());
@@ -66,14 +60,6 @@ app.get('/api/devices', (req, res) => {
 const connectedDevices = new Map();
 const connectedUsers = new Map();
 const deviceUserMap = new Map();
-
-// Add Engine.IO level debugging
-io.engine.on("connection_error", (err) => {
-  console.error("⚠️ Engine.IO connection error:", err);
-  console.error("   - Code:", err.code);
-  console.error("   - Message:", err.message);
-  console.error("   - Context:", err.context);
-});
 
 const CONNECTION_STATES = {
   CONNECTED: 'connected',
