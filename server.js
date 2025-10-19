@@ -10,16 +10,19 @@ const server = createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: false
   },
   pingTimeout: 120000,       // 120 seconds - ESP32 devices may be slow to respond
   pingInterval: 45000,       // Send ping every 45 seconds (less frequent)
   transports: ['polling', 'websocket'], // Try polling first for ESP32 compatibility
-  allowEIO3: true,           // Support older Engine.IO clients
+  allowEIO3: true,           // CRITICAL: Support Engine.IO v3 for ESP32
   upgradeTimeout: 30000,     // Allow more time for transport upgrade
   maxHttpBufferSize: 1e6,    // 1MB buffer
   perMessageDeflate: false,  // Disable compression for IoT devices
-  connectTimeout: 45000      // Allow more time for initial connection
+  connectTimeout: 45000,     // Allow more time for initial connection
+  allowUpgrades: true,       // Allow transport upgrades
+  cookie: false              // Disable cookies for IoT devices
 });
 
 app.use(cors());
@@ -62,13 +65,19 @@ const CONNECTION_STATES = {
 };
 
 io.on('connection', (socket) => {
-  console.log(`✓ Client connected: ${socket.id} [Transport: ${socket.conn.transport.name}]`);
-  console.log(`  - Protocol: ${socket.conn.protocol}`);
-  console.log(`  - Headers: ${JSON.stringify(socket.handshake.headers['user-agent'])}`);
+  const userAgent = socket.handshake.headers['user-agent'] || 'Unknown';
+  const isESP32 = userAgent.includes('ESP32') || userAgent.includes('arduino-WebSocket') || !userAgent.includes('Mozilla');
+  const clientType = isESP32 ? '🔌 ESP32 Device' : '🌐 Browser';
+
+  console.log(`✓ ${clientType} connected: ${socket.id}`);
+  console.log(`  - Transport: ${socket.conn.transport.name}`);
+  console.log(`  - Protocol: EIO v${socket.conn.protocol}`);
+  console.log(`  - User-Agent: ${userAgent}`);
+  console.log(`  - Remote IP: ${socket.handshake.address}`);
 
   // Log transport upgrade events
   socket.conn.on('upgrade', (transport) => {
-    console.log(`Transport upgraded to: ${transport.name} for socket ${socket.id}`);
+    console.log(`📡 Transport upgraded to: ${transport.name} for ${clientType} ${socket.id}`);
   });
 
   // Track if device registers within reasonable time
